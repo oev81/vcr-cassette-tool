@@ -167,7 +167,7 @@ class Cassette:
                 Interaction.from_dict(interaction)
                 for interaction in cassette['interactions']
             ],
-            version=cassette['version'],
+            version=cassette.get('version', 1),
         )
 
     def to_dict(self) -> Dict[str, Any]:
