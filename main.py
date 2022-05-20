@@ -22,7 +22,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-JSON_CONTENT_TYPES = ('application/json', 'text/json')
+JSON_CONTENT_TYPES = ('application/json', 'application/ld+json', 'text/json')
 XML_CONTENT_TYPES = ('application/xml', 'text/xml')
 CSV_CONTENT_TYPES = ('application/csv', 'text/csv')
 
