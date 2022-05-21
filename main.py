@@ -251,7 +251,7 @@ def dump_to_file(path: str, data: Union[str, bytes]) -> None:
     if isinstance(data, str):
         file_obj = open(path, mode='wt', newline='', encoding='utf-8')
     else:
-        file_obj = open(path, mode='w')
+        file_obj = open(path, mode='wb')
 
     with file_obj:
         file_obj.write(data)
