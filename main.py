@@ -30,18 +30,37 @@ CSV_CONTENT_TYPES = ('application/csv', 'text/csv')
 @dataclasses.dataclass
 class Headers:
     value: Dict[str, List[str]]
+    _ci_keys_map: Dict[str, str]
 
     @classmethod
     def from_dict(cls, headers: Dict[str, List[str]]) -> 'Headers':
-        return cls(headers)
+        ci_keys_map = {
+            key.lower(): key for key in headers.keys()
+        }
+
+        return cls(headers, ci_keys_map)
 
     def to_dict(self) -> Dict[str, List[str]]:
         return self.value
 
     def has_content_type(self, content_type: str) -> bool:
-        return (
-            'Content-Type' in self.value
-            and any(content_type in item for item in self.value['Content-Type'])
+        header_key = self._ci_keys_map.get('content-type')
+        if not header_key:
+            return False
+
+        return any(
+            content_type in item
+            for item in self.value[header_key]
+        )
+
+    def has_content_encoding(self, content_encoding: str) -> bool:
+        header_key = self._ci_keys_map.get('content-encoding')
+        if not header_key:
+            return False
+
+        return any(
+            content_encoding == item
+            for item in self.value[header_key]
         )
 
 
@@ -387,6 +406,13 @@ class DumpCassetteToUnpackedForm:
         if ext == 'json':
             body = self._indent_json(body)
 
+        if (
+            self._is_text_format(ext)
+            and isinstance(body, bytes)
+            and headers.has_content_encoding('gzip')
+        ):
+            ext = f'{ext}.gz'
+
         dump_to_file(
             path=os.path.join(base_dir, f'{filename}.{ext}'),
             data=body,
@@ -419,6 +445,9 @@ class DumpCassetteToUnpackedForm:
             return 'bin'
 
         return 'txt'
+
+    def _is_text_format(self, ext: str) -> bool:
+        return ext in ('txt', 'json', 'csv', 'xml')
 
     def _indent_json(self, body: str) -> str:
         if not body:
