@@ -6,7 +6,7 @@ import logging
 import os
 import random
 import string
-from typing import Any, ClassVar, Dict, Generator, List, Optional, Union
+from typing import Any, Dict, Generator, List, Optional, TextIO, Union
 
 import yaml
 
@@ -26,42 +26,53 @@ JSON_CONTENT_TYPES = ('application/json', 'application/ld+json', 'text/json')
 XML_CONTENT_TYPES = ('application/xml', 'text/xml')
 CSV_CONTENT_TYPES = ('application/csv', 'text/csv')
 
+BYTES_HEADER_PREFIX = '{<[bytes]>}'
 
-@dataclasses.dataclass
+
 class Headers:
-    value: Dict[str, List[str]]
-    _ci_keys_map: Dict[str, str]
-
-    @classmethod
-    def from_dict(cls, headers: Dict[str, List[str]]) -> 'Headers':
-        ci_keys_map = {
-            key.lower(): key for key in headers.keys()
-        }
-
-        return cls(headers, ci_keys_map)
-
-    def to_dict(self) -> Dict[str, List[str]]:
-        return self.value
+    def __init__(
+        self,
+        value: Dict[str, Union[List[str], List[bytes]]],
+    ) -> None:
+        self.value = value
+        self._ci_keys_map = {key.lower(): key for key in value.keys()}
 
     def has_content_type(self, content_type: str) -> bool:
         header_key = self._ci_keys_map.get('content-type')
         if not header_key:
             return False
 
-        return any(
-            content_type in item
-            for item in self.value[header_key]
-        )
+        header_values = self.value[header_key]
+        if not header_values:
+            return False
+
+        if isinstance(header_values[0], bytes):
+            content_type = content_type.encode()
+
+        for header_value in header_values:
+            if isinstance(header_value, bytes):
+                header_value = header_value.decode()
+
+            return any(
+                content_type == part
+                for part in header_value.split(';')
+            )
 
     def has_content_encoding(self, content_encoding: str) -> bool:
         header_key = self._ci_keys_map.get('content-encoding')
         if not header_key:
             return False
 
-        return any(
-            content_encoding == item
-            for item in self.value[header_key]
-        )
+        header_values = self.value[header_key]
+        if not header_values:
+            return False
+
+        for header_value in header_values:
+            if isinstance(header_value, bytes):
+                header_value = header_value.decode()
+
+            if content_encoding == header_value:
+                return True
 
 
 @dataclasses.dataclass
@@ -71,56 +82,16 @@ class Request:
     body: Optional[Union[str, bytes]]
     headers: Headers
 
-    @classmethod
-    def from_dict(cls, request: Dict[str, Any]) -> 'Request':
-        return cls(
-            method=request['method'],
-            uri=request['uri'],
-            body=request['body'],
-            headers=Headers.from_dict(request['headers']),
-        )
-
-    def to_dict(self) -> Dict[str, Any]:
-        return {
-            'method': self.method,
-            'uri': self.uri,
-            'body': self.body,
-            'headers': self.headers.to_dict(),
-        }
-
 
 @dataclasses.dataclass
 class ResponseStatus:
     code: int
     message: str
 
-    @classmethod
-    def from_dict(cls, status: Dict[str, Any]) -> 'ResponseStatus':
-        return cls(
-            code=status['code'],
-            message=status['message'],
-        )
-
-    def to_dict(self) -> Dict[str, Any]:
-        return {
-            'code': self.code,
-            'message': self.message,
-        }
-
 
 @dataclasses.dataclass
 class StringBody:
-    TYPE_KEY: ClassVar[str] = 'string'
     value: Union[str, bytes]
-
-    @classmethod
-    def from_dict(cls, body: Dict[str, Any]) -> 'StringBody':
-        return cls(body[cls.TYPE_KEY])
-
-    def to_dict(self) -> Dict[str, Union[str, bytes]]:
-        return {
-            self.TYPE_KEY: self.value,
-        }
 
 
 @dataclasses.dataclass
@@ -129,74 +100,17 @@ class Response:
     body: Optional[StringBody]
     status: ResponseStatus
 
-    @classmethod
-    def from_dict(cls, response: Dict[str, Any]) -> 'Response':
-        return cls(
-            body=cls._body_from_dict(response['body']),
-            headers=Headers.from_dict(response['headers']),
-            status=ResponseStatus.from_dict(response['status']),
-        )
-
-    @classmethod
-    def _body_from_dict(cls, body: Dict[str, Any]):
-        if StringBody.TYPE_KEY in body:
-            return StringBody.from_dict(body)
-
-        raise Exception(f'Unexpected body: {list(body)}')
-
-    def to_dict(self) -> Dict[str, Any]:
-        return {
-            'body': self.body.to_dict(),
-            'headers': self.headers.to_dict(),
-            'status': self.status.to_dict(),
-        }
-
 
 @dataclasses.dataclass
 class Interaction:
     request: Request
     response: Response
 
-    @classmethod
-    def from_dict(
-        cls,
-        interaction: Dict[str, Any],
-    ) -> 'Interaction':
-        return cls(
-            request=Request.from_dict(interaction['request']),
-            response=Response.from_dict(interaction['response']),
-        )
-
-    def to_dict(self) -> Dict[str, Any]:
-        return {
-            'request': self.request.to_dict(),
-            'response': self.response.to_dict(),
-        }
-
 
 @dataclasses.dataclass
 class Cassette:
     interactions: List[Interaction]
     version: int
-
-    @classmethod
-    def from_dict(cls, cassette: Dict[str, Any]) -> 'Cassette':
-        return cls(
-            interactions=[
-                Interaction.from_dict(interaction)
-                for interaction in cassette['interactions']
-            ],
-            version=cassette.get('version', 1),
-        )
-
-    def to_dict(self) -> Dict[str, Any]:
-        return {
-            'interactions': [
-                interaction.to_dict()
-                for interaction in self.interactions
-            ],
-            'version': self.version,
-        }
 
 
 def tidy_json_body(body: str) -> str:
@@ -234,22 +148,81 @@ class TidyJsonBodiesInCassette:
 tidy_json_bodies_in_cassette = TidyJsonBodiesInCassette()
 
 
-def load_cassette(path: str) -> Cassette:
-    if not any(
-        path.endswith(ending)
-        for ending in ('.yaml.gz', '.yaml', '.yml', '.yml.gz')
-    ):
-        raise Exception(f'File is not cassette: {path}')
+class LoadPackedCassette:
+    def __call__(self, path: str) -> Cassette:
+        self._check_extension(path)
 
-    if path.endswith('.gz'):
-        file_obj = gzip.open(path)
-    else:
-        file_obj = open(path)
+        with self._open(path) as file_obj:
+            cassette_data = yaml.load(file_obj, yaml.Loader)
 
-    with file_obj:
-        data = yaml.load(file_obj, yaml.Loader)
+            return self._load_cassette(cassette_data)
 
-        return Cassette.from_dict(data)
+    def _check_extension(self, path: str) -> None:
+        if not any(
+            path.endswith(ending)
+            for ending in ('.yaml.gz', '.yaml', '.yml', '.yml.gz')
+        ):
+            raise Exception(f'File is not cassette: {path}')
+
+    def _open(self, path: str) -> TextIO:
+        if path.endswith('.gz'):
+            return gzip.open(path)
+
+        return open(path)
+
+    def _load_cassette(self, cassette: Dict[str, Any]) -> 'Cassette':
+        return Cassette(
+            interactions=[
+                self._load_interaction(interaction)
+                for interaction in cassette['interactions']
+            ],
+            version=cassette.get('version', 1),
+        )
+
+    def _load_interaction(
+        self,
+        interaction: Dict[str, Any],
+    ) -> 'Interaction':
+        return Interaction(
+            request=self._load_request(interaction['request']),
+            response=self._load_response(interaction['response']),
+        )
+
+    def _load_request(self, request: Dict[str, Any]) -> 'Request':
+        return Request(
+            method=request['method'],
+            uri=request['uri'],
+            body=request['body'],
+            headers=self._load_headers(request['headers']),
+        )
+
+    def _load_response(self, response: Dict[str, Any]) -> 'Response':
+        return Response(
+            body=self._load_response_body(response['body']),
+            headers=self._load_headers(response['headers']),
+            status=self._load_response_status(response['status']),
+        )
+
+    def _load_response_body(self, body: Dict[str, Any]):
+        if 'string' not in body:
+            raise Exception(f'Unexpected body: {list(body)}')
+
+        return StringBody(body['string'])
+
+    def _load_headers(
+        self,
+        headers: Dict[str, Union[List[str], List[bytes]]],
+    ) -> 'Headers':
+        return Headers(headers)
+
+    def _load_response_status(self, status: Dict[str, Any]) -> 'ResponseStatus':
+        return ResponseStatus(
+            code=status['code'],
+            message=status['message'],
+        )
+
+
+load_packed_cassette = LoadPackedCassette()
 
 
 def dump_to_yaml_file(path: str, data: Dict[str, Any]) -> None:
@@ -356,9 +329,9 @@ class DumpCassetteToUnpackedForm:
             path=os.path.join(base_dir, f'__uri.txt'),
             data=request.uri,
         )
-        dump_to_yaml_file(
+        self._dump_headers(
+            request.headers,
             path=os.path.join(base_dir, f'_headers.yaml'),
-            data=request.headers.value,
         )
         dump_to_file(
             path=os.path.join(base_dir, f'_method.txt'),
@@ -378,21 +351,60 @@ class DumpCassetteToUnpackedForm:
         base_dir: str,
         response: Response,
     ) -> None:
-        dump_to_yaml_file(
+        self._dump_headers(
+            response.headers,
             path=os.path.join(base_dir, 'headers.yaml'),
-            data=response.headers.value,
         )
-        dump_to_yaml_file(
+        self._dump_response_status(
+            response.status,
             path=os.path.join(base_dir, 'status.yaml'),
-            data=response.status.to_dict(),
         )
-
         self._dump_body(
             base_dir=base_dir,
             filename='body',
             body=response.body.value,
             headers=response.headers,
         )
+
+    def _dump_headers(
+        self,
+        headers: Headers,
+        path: str,
+    ) -> None:
+        headers_data = {
+            header_name: [
+                self._try_to_convert_header_value_to_str(header_name, value)
+                for value in values
+            ]
+            for header_name, values in headers.value.items()
+        }
+        dump_to_yaml_file(path, data=headers_data)
+
+    def _try_to_convert_header_value_to_str(
+        self,
+        header_name: str,
+        value: Union[bytes, str],
+    ) -> Union[bytes, str]:
+        if not isinstance(value, bytes):
+            return value
+
+        try:
+            return BYTES_HEADER_PREFIX + value.decode('utf-8')
+        except ValueError:
+            logger.debug("Can't decode to utf-8: %s=%r", header_name, value)
+
+        return value
+
+    def _dump_response_status(
+        self,
+        status: ResponseStatus,
+        path: str,
+    ) -> None:
+        data = {
+            'code': status.code,
+            'message': status.message,
+        }
+        dump_to_yaml_file(path, data)
 
     def _dump_body(
         self,
@@ -507,15 +519,20 @@ class LoadUnpackedCassette:
             yield path
 
     def _load_request(self, base_dir: str) -> Request:
-        uri = load_str_from_file(path=os.path.join(base_dir, '__uri.txt'))
-        method = self._load_method(path=os.path.join(base_dir, '_method.txt'))
-
-        headers_data = load_yaml_from_file(
-            path=os.path.join(base_dir, '_headers.yaml')
+        uri = load_str_from_file(
+            path=os.path.join(base_dir, '__uri.txt')
         )
-        headers = Headers.from_dict(headers_data)
+        method = self._load_method(
+            path=os.path.join(base_dir, '_method.txt')
+        )
+        headers = self._load_headers(
+            path=os.path.join(base_dir, '_headers.yaml'),
+        )
 
-        body_file_name = self._get_body_filename(base_dir, filename='_body')
+        body_file_name = self._get_body_filename(
+            base_dir,
+            filename='_body',
+        )
         body = self._load_body(
             base_dir=base_dir,
             filename=body_file_name,
@@ -529,12 +546,13 @@ class LoadUnpackedCassette:
         )
 
     def _load_response(self, base_dir: str) -> Response:
-        headers_data = load_yaml_from_file(
+        headers = self._load_headers(
             path=os.path.join(base_dir, 'headers.yaml')
         )
-        headers = Headers.from_dict(headers_data)
-
-        body_file_name = self._get_body_filename(base_dir, filename='body')
+        body_file_name = self._get_body_filename(
+            base_dir,
+            filename='body',
+        )
         body = self._load_body(
             base_dir=base_dir,
             filename=body_file_name,
@@ -542,10 +560,9 @@ class LoadUnpackedCassette:
         if body is not None:
             body = StringBody(body)
 
-        status_data = load_yaml_from_file(
+        status = self._load_response_status(
             path=os.path.join(base_dir, 'status.yaml')
         )
-        status = ResponseStatus.from_dict(status_data)
 
         return Response(
             headers=headers,
@@ -553,9 +570,32 @@ class LoadUnpackedCassette:
             status=status,
         )
 
+    def _load_headers(self, path: str) -> Headers:
+        headers_data = load_yaml_from_file(path)
+        _headers_data = {
+            header_name: [
+                self._convert_header_value_to_original(value)
+                for value in values
+            ]
+            for header_name, values in headers_data.items()
+        }
+
+        return Headers(_headers_data)
+
+    def _convert_header_value_to_original(
+        self,
+        value: Union[bytes, str],
+    ) -> Union[bytes, str]:
+        if isinstance(value, bytes):
+            return value
+
+        if value.startswith(BYTES_HEADER_PREFIX):
+            return value[len(BYTES_HEADER_PREFIX):].encode('utf-8')
+
+        return value
+
     def _load_method(self, path: str) -> str:
         method = load_str_from_file(path)
-
         method_ = method.strip().upper()
 
         if method_ not in ('GET', 'POST', 'PUT', 'PATCH', 'DELETE'):
@@ -569,7 +609,6 @@ class LoadUnpackedCassette:
         filename: str,
     ) -> Optional[str]:
         names = os.listdir(base_dir)
-
         prefix = f'{filename}.'
 
         body_names = [
@@ -593,7 +632,9 @@ class LoadUnpackedCassette:
         if filename is None:
             return None
 
-        return self._load_body_data(path=os.path.join(base_dir, filename))
+        return self._load_body_data(
+            path=os.path.join(base_dir, filename)
+        )
 
     def _load_body_data(
         self,
@@ -616,20 +657,89 @@ class LoadUnpackedCassette:
 
         raise Exception(f'Unexpected body: {path}')
 
+    def _load_response_status(
+        self,
+        path: str,
+    ) -> 'ResponseStatus':
+        status = load_yaml_from_file(path)
+
+        return ResponseStatus(
+            code=status['code'],
+            message=status['message'],
+        )
+
 
 load_unpacked_cassette = LoadUnpackedCassette()
 
 
-def dump_cassette(cassette: Cassette, path: str) -> None:
-    if path.endswith('.gz'):
-        file_obj = gzip.open(path, 'wt', compresslevel=9)
-    else:
-        file_obj = open(path, 'wt')
+class DumpCassetteToPackedForm:
+    def __call__(
+        self,
+        cassette: Cassette,
+        path: str,
+    ) -> None:
+        cassette_data = self._dump_cassette(cassette)
 
-    data = cassette.to_dict()
-    with file_obj:
-        yaml.dump(data, file_obj, Dumper=YamlDumper)
-        file_obj.flush()
+        with self._open(path) as file_obj:
+            yaml.dump(cassette_data, file_obj, Dumper=YamlDumper)
+            file_obj.flush()
+
+    def _open(self, path: str) -> TextIO:
+        if path.endswith('.gz'):
+            return gzip.open(path, 'wt', compresslevel=9)
+
+        return open(path, 'wt')
+
+    def _dump_cassette(self, cassette: Cassette) -> Dict[str, Any]:
+        return {
+            'interactions': [
+                self._dump_interaction(interaction)
+                for interaction in cassette.interactions
+            ],
+            'version': cassette.version,
+        }
+
+    def _dump_interaction(
+        self,
+        interaction: Interaction,
+    ) -> Dict[str, Any]:
+        return {
+            'request': self._dump_request(interaction.request),
+            'response': self._dump_response(interaction.response),
+        }
+
+    def _dump_request(self, request: Request) -> Dict[str, Any]:
+        return {
+            'method': request.method,
+            'uri': request.uri,
+            'body': request.body,
+            'headers': request.headers.value,
+        }
+
+    def _dump_response(self, response: Response) -> Dict[str, Any]:
+        return {
+            'body': self._dump_response_body(response.body),
+            'headers': response.headers.value,
+            'status': self._dump_response_status(response.status),
+        }
+
+    def _dump_response_body(
+        self,
+        body: StringBody,
+    ) -> Dict[str, Any]:
+        return {'string': body.value}
+
+    def _dump_response_status(
+        self,
+        status: ResponseStatus,
+    ) -> Dict[str, Any]:
+        return {
+            'code': status.code,
+            'message': status.message,
+        }
+
+
+dump_cassette_to_packed_form = DumpCassetteToPackedForm()
 
 
 def generate_unpacked_cassette_path(cassette_path: str) -> str:
@@ -666,8 +776,7 @@ def perform_unpack(
     if not dest_path:
         dest_path = generate_unpacked_cassette_path(source_path)
 
-    cassette = load_cassette(source_path)
-
+    cassette = load_packed_cassette(source_path)
     dump_cassette_to_unpacked_form(dest_path, cassette)
 
 
@@ -679,7 +788,7 @@ def perform_pack(
         dest_path = generate_cassette_path(source_path)
 
     cassette = load_unpacked_cassette(source_path)
-    dump_cassette(cassette, dest_path)
+    dump_cassette_to_packed_form(cassette, dest_path)
 
 
 def perform_tidy_json_bodies(
@@ -689,9 +798,9 @@ def perform_tidy_json_bodies(
     if not dest_path:
         dest_path = generate_cassette_path(source_path)
 
-    cassette = load_cassette(source_path)
+    cassette = load_packed_cassette(source_path)
     tidy_json_bodies_in_cassette(cassette)
-    dump_cassette(cassette, dest_path)
+    dump_cassette_to_packed_form(cassette, dest_path)
 
 
 def parse_args() -> Dict[str, Any]:
