@@ -403,15 +403,15 @@ class DumpCassetteToUnpackedForm:
     ) -> None:
         ext = self._get_filename_ext(body, headers)
 
-        if ext == 'json':
-            body = self._indent_json(body)
-
         if (
             self._is_text_format(ext)
             and isinstance(body, bytes)
             and headers.has_content_encoding('gzip')
         ):
             ext = f'{ext}.gz'
+
+        if ext == 'json':
+            body = self._indent_json(body)
 
         dump_to_file(
             path=os.path.join(base_dir, f'{filename}.{ext}'),
