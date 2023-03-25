@@ -22,9 +22,12 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+JSONL_CONTENT_TYPES = ('application/jsonl',)
 JSON_CONTENT_TYPES = ('application/json', 'application/ld+json', 'text/json')
 XML_CONTENT_TYPES = ('application/xml', 'text/xml')
 CSV_CONTENT_TYPES = ('application/csv', 'text/csv')
+GZ_CONTENT_TYPES = ('application/gzip',)
+ZIP_CONTENT_TYPES = ('application/zip',)
 
 BYTES_HEADER_PREFIX = '{<[bytes]>}'
 
@@ -437,6 +440,12 @@ class DumpCassetteToUnpackedForm:
     ) -> str:
         if any(
             headers.has_content_type(content_type)
+            for content_type in JSONL_CONTENT_TYPES
+        ):
+            return 'jsonl'
+
+        if any(
+            headers.has_content_type(content_type)
             for content_type in JSON_CONTENT_TYPES
         ):
             return 'json'
@@ -452,6 +461,18 @@ class DumpCassetteToUnpackedForm:
             for content_type in CSV_CONTENT_TYPES
         ):
             return 'csv'
+
+        if any(
+            headers.has_content_type(content_type)
+            for content_type in GZ_CONTENT_TYPES
+        ):
+            return 'gz'
+
+        if any(
+            headers.has_content_type(content_type)
+            for content_type in ZIP_CONTENT_TYPES
+        ):
+            return 'zip'
 
         if isinstance(body, bytes):
             return 'bin'
