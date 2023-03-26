@@ -490,7 +490,6 @@ class DumpCassetteToUnpackedForm:
 
         return json.dumps(
             json_body,
-            sort_keys=True,
             indent=4,
             separators=(',', ': '),
             cls=json.JSONEncoder,
