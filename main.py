@@ -425,7 +425,12 @@ class DumpCassetteToUnpackedForm:
         ):
             ext = f'{ext}.gz'
 
-        if ext == 'json':
+        if (
+            # NOTE(oev81): sometimes gzip header is not set
+            # but body is gzipped.
+            ext == 'json'
+            and isinstance(body, str)
+        ):
             body = self._indent_json(body)
 
         dump_to_file(
