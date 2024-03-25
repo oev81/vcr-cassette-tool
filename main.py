@@ -772,7 +772,7 @@ def generate_unpacked_cassette_path(cassette_path: str) -> str:
     base_name = os.path.basename(cassette_path)
 
     base_name = _clean_from_extensions(base_name)
-    random_part = generate_random_string(length=6)
+    random_part = generate_random_string(length=2)
 
     return os.path.join(cassette_dir, f'{base_name}__{random_part}')
 
@@ -782,7 +782,7 @@ def generate_cassette_path(unpacked_cassette_path: str) -> str:
     base_name = os.path.basename(unpacked_cassette_path)
 
     base_name = _clean_from_extensions(base_name)
-    random_part = generate_random_string(length=6)
+    random_part = generate_random_string(length=2)
 
     return os.path.join(cassette_dir, f'{base_name}_{random_part}.yaml.gz')
 
