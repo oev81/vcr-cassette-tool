@@ -416,6 +416,14 @@ class DumpCassetteToUnpackedForm:
         body: Union[str, bytes],
         headers: Headers,
     ) -> None:
+        if isinstance(body, dict):
+            # TODO(oev81): improve typing for body
+            dump_to_yaml_file(
+                path=os.path.join(base_dir, f'{filename}.yaml'),
+                data=body,
+            )
+            return
+
         ext = self._get_filename_ext(body, headers)
 
         if (
@@ -665,6 +673,13 @@ class LoadUnpackedCassette:
         self,
         path: str,
     ) -> Union[str, bytes]:
+        if any(
+            path.endswith(ext)
+            for ext in ('.yml', '.yaml')
+        ):
+            # TODO(oev81): improve typing for body
+            return load_yaml_from_file(path)
+
         if any(
             path.endswith(ext)
             for ext in ('.bin', '.zip', '.xlsx', '.xls', '.gz')
