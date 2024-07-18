@@ -93,14 +93,9 @@ class ResponseStatus:
 
 
 @dataclasses.dataclass
-class StringBody:
-    value: Union[str, bytes]
-
-
-@dataclasses.dataclass
 class Response:
     headers: Headers
-    body: Optional[StringBody]
+    body: Any
     status: ResponseStatus
 
 
@@ -140,12 +135,16 @@ class TidyJsonBodiesInCassette:
             return
 
     def _for_response(self, response: Response) -> None:
-        if any(
+        if not any(
             response.headers.has_content_type(content_type)
             for content_type in JSON_CONTENT_TYPES
         ):
-            response.body.value = tidy_json_body(response.body.value)
             return
+
+        if not isinstance(response.body, (str, bytes)):
+            return
+
+        response.body = tidy_json_body(response.body)
 
 
 tidy_json_bodies_in_cassette = TidyJsonBodiesInCassette()
@@ -206,11 +205,14 @@ class LoadPackedCassette:
             status=self._load_response_status(response['status']),
         )
 
-    def _load_response_body(self, body: Dict[str, Any]):
-        if 'string' not in body:
-            raise Exception(f'Unexpected body: {list(body)}')
+    def _load_response_body(self, body: Dict[str, Any]) -> Any:
+        if (
+            not body
+            or 'string' not in body
+        ):
+            return body
 
-        return StringBody(body['string'])
+        return body['string']
 
     def _load_headers(
         self,
@@ -365,7 +367,7 @@ class DumpCassetteToUnpackedForm:
         self._dump_body(
             base_dir=base_dir,
             filename='body',
-            body=response.body.value,
+            body=response.body,
             headers=response.headers,
         )
 
@@ -413,10 +415,10 @@ class DumpCassetteToUnpackedForm:
         self,
         base_dir: str,
         filename: str,
-        body: Union[str, bytes],
+        body: Any,
         headers: Headers,
     ) -> None:
-        if isinstance(body, dict):
+        if not isinstance(body, (str, bytes)):
             # TODO(oev81): improve typing for body
             dump_to_yaml_file(
                 path=os.path.join(base_dir, f'{filename}.yaml'),
@@ -590,8 +592,6 @@ class LoadUnpackedCassette:
             base_dir=base_dir,
             filename=body_file_name,
         )
-        if body is not None:
-            body = StringBody(body)
 
         status = self._load_response_status(
             path=os.path.join(base_dir, 'status.yaml')
@@ -672,12 +672,11 @@ class LoadUnpackedCassette:
     def _load_body_data(
         self,
         path: str,
-    ) -> Union[str, bytes]:
+    ) -> Any:
         if any(
             path.endswith(ext)
             for ext in ('.yml', '.yaml')
         ):
-            # TODO(oev81): improve typing for body
             return load_yaml_from_file(path)
 
         if any(
@@ -765,9 +764,12 @@ class DumpCassetteToPackedForm:
 
     def _dump_response_body(
         self,
-        body: StringBody,
+        body: Any,
     ) -> Dict[str, Any]:
-        return {'string': body.value}
+        if isinstance(body, (str, bytes)):
+            return {'string': body}
+
+        return body
 
     def _dump_response_status(
         self,
